@@ -3,7 +3,16 @@ declare module 'html2pdf.js' {
     margin?: number | [number, number, number, number];
     filename?: string;
     image?: { type: 'jpeg' | 'png' | 'webp'; quality: number };
-    html2canvas?: { scale?: number; useCORS?: boolean; backgroundColor?: string };
+    html2canvas?: {
+      scale?: number;
+      useCORS?: boolean;
+      allowTaint?: boolean;
+      backgroundColor?: string;
+      scrollX?: number;
+      scrollY?: number;
+      windowWidth?: number;
+      logging?: boolean;
+    };
     jsPDF?: { unit?: string; format?: string; orientation?: 'portrait' | 'landscape' };
     pagebreak?: { mode?: Array<'avoid-all' | 'css' | 'legacy'> };
   }

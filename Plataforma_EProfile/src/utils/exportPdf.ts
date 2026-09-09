@@ -13,19 +13,44 @@ const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string): HTM
   return element;
 };
 
+const nextPaint = (): Promise<void> => new Promise((resolve) => {
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+});
+
+const waitForImages = async (container: HTMLElement): Promise<void> => {
+  const images = Array.from(container.querySelectorAll('img'));
+  await Promise.all(images.map((image) => {
+    if (image.complete) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      const finish = (): void => resolve();
+      image.addEventListener('load', finish, { once: true });
+      image.addEventListener('error', finish, { once: true });
+      window.setTimeout(finish, 5000);
+    });
+  }));
+};
+
 export async function exportProfilePdf(data: ProfileBundle, templateId: PdfTemplate): Promise<void> {
   const { default: html2pdf } = await import('html2pdf.js');
   const palette = palettes[templateId];
   const root = node('main');
-  root.style.cssText = `position:fixed;left:-10000px;top:0;width:760px;padding:42px;color:#172033;background:white;font-family:${palette.font};line-height:1.45`;
+  root.setAttribute('aria-hidden', 'true');
+  root.style.cssText = `position:relative;z-index:2147483646;box-sizing:border-box;width:760px;padding:42px;color:#172033;background:#ffffff;font-family:${palette.font};line-height:1.45`;
+
+  const progress = node('div');
+  progress.setAttribute('role', 'status');
+  progress.textContent = 'Generando PDF…';
+  progress.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:rgba(15,23,42,.94);color:#ffffff;font:600 16px Arial,sans-serif;letter-spacing:.2px';
 
   const header = node('header');
   header.style.cssText = `border-bottom:4px solid ${palette.accent};padding-bottom:20px;margin-bottom:24px;display:flex;gap:22px;align-items:center`;
   if (data.profile.photo_url) {
     const photo = node('img');
-    photo.src = data.profile.photo_url;
     photo.alt = '';
     photo.crossOrigin = 'anonymous';
+    photo.referrerPolicy = 'no-referrer';
+    photo.src = data.profile.photo_url;
     photo.style.cssText = 'width:104px;height:104px;object-fit:cover;border-radius:50%';
     header.append(photo);
   }
@@ -79,14 +104,34 @@ export async function exportProfilePdf(data: ProfileBundle, templateId: PdfTempl
     section.append(node('p', values.join('  ·  ')));
   });
 
-  document.body.append(root);
+  document.body.append(root, progress);
   try {
+    await document.fonts?.ready;
+    await waitForImages(root);
+    await nextPaint();
+
+    const bounds = root.getBoundingClientRect();
+    if (bounds.width === 0 || root.scrollHeight === 0) {
+      throw new Error('No fue posible preparar el contenido del PDF.');
+    }
+
     await html2pdf().set({
       margin: [8, 8, 8, 8], filename: `${data.student.slug}-cv.pdf`,
-      image: { type: 'jpeg', quality: 0.96 }, html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      image: { type: 'jpeg', quality: 0.96 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: '#ffffff',
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: 900,
+        logging: false,
+      },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }, pagebreak: { mode: ['css', 'legacy'] },
     }).from(root).save();
   } finally {
+    progress.remove();
     root.remove();
   }
 }
