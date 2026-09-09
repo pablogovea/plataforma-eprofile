@@ -1,20 +1,31 @@
 -- Plataforma EProfile - esquema inicial, RLS y publicación atómica.
 -- Ejecutar en Supabase SQL Editor como propietario del proyecto.
 
+begin;
+
 create extension if not exists pgcrypto;
 create extension if not exists citext;
 
-create type public.app_role as enum ('estudiante', 'admin_plataforma');
-create type public.profile_status as enum ('borrador', 'publicado');
-create type public.pdf_template as enum ('clasica', 'moderna', 'minimalista');
+do $$ begin
+  create type public.app_role as enum ('estudiante', 'admin_plataforma');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.profile_status as enum ('borrador', 'publicado');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.pdf_template as enum ('clasica', 'moderna', 'minimalista');
+exception when duplicate_object then null;
+end $$;
 
-create table public.user_roles (
+create table if not exists public.user_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   role public.app_role not null default 'estudiante',
   created_at timestamptz not null default now()
 );
 
-create table public.students (
+create table if not exists public.students (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null unique references auth.users(id) on delete cascade,
   slug citext not null unique check (slug::text ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
@@ -23,7 +34,7 @@ create table public.students (
   updated_at timestamptz not null default now()
 );
 
-create table public.profiles (
+create table if not exists public.profiles (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null unique references public.students(id) on delete cascade,
   full_name text not null default '' check (char_length(full_name) <= 120),
@@ -38,54 +49,57 @@ create table public.profiles (
   updated_at timestamptz not null default now()
 );
 
-create table public.formations (
+create table if not exists public.formations (
   id uuid primary key default gen_random_uuid(), student_id uuid not null references public.students(id) on delete cascade,
   institution text not null, degree text not null, start_date date, end_date date,
   description text not null default '', sort_order integer not null default 0
 );
 
-create table public.experiences (
+create table if not exists public.experiences (
   id uuid primary key default gen_random_uuid(), student_id uuid not null references public.students(id) on delete cascade,
   organization text not null, position text not null, start_date date, end_date date,
   description text not null default '', sort_order integer not null default 0
 );
 
-create table public.skills (
+create table if not exists public.skills (
   id uuid primary key default gen_random_uuid(), student_id uuid not null references public.students(id) on delete cascade,
   name text not null, category text not null default 'General', level smallint check (level between 1 and 5),
   sort_order integer not null default 0
 );
-create table public.recognitions (
+create table if not exists public.recognitions (
   id uuid primary key default gen_random_uuid(), student_id uuid not null references public.students(id) on delete cascade,
   title text not null, issuer text not null default '', awarded_on date, description text not null default '',
   url text, sort_order integer not null default 0
 );
 
-create table public.projects (
+create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(), student_id uuid not null references public.students(id) on delete cascade,
   name text not null, description text not null default '', technologies text[] not null default '{}',
   role text not null default '', repository_url text, live_url text, is_academic boolean not null default true,
   sort_order integer not null default 0
 );
 
-create table public.contacts (
+create table if not exists public.contacts (
   id uuid primary key default gen_random_uuid(), student_id uuid not null unique references public.students(id) on delete cascade,
   email text not null default '', phone text not null default '', linkedin_url text, github_url text,
   website_url text, location text not null default '', updated_at timestamptz not null default now()
 );
 
-create index formations_student_order_idx on public.formations(student_id, sort_order);
-create index experiences_student_order_idx on public.experiences(student_id, sort_order);
-create index skills_student_order_idx on public.skills(student_id, sort_order);
-create index recognitions_student_order_idx on public.recognitions(student_id, sort_order);
-create index projects_student_order_idx on public.projects(student_id, sort_order);
+create index if not exists formations_student_order_idx on public.formations(student_id, sort_order);
+create index if not exists experiences_student_order_idx on public.experiences(student_id, sort_order);
+create index if not exists skills_student_order_idx on public.skills(student_id, sort_order);
+create index if not exists recognitions_student_order_idx on public.recognitions(student_id, sort_order);
+create index if not exists projects_student_order_idx on public.projects(student_id, sort_order);
 
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql set search_path = '' as $$
 begin new.updated_at = now(); return new; end;
 $$;
+drop trigger if exists students_touch on public.students;
 create trigger students_touch before update on public.students for each row execute function public.touch_updated_at();
+drop trigger if exists profiles_touch on public.profiles;
 create trigger profiles_touch before update on public.profiles for each row execute function public.touch_updated_at();
+drop trigger if exists contacts_touch on public.contacts;
 create trigger contacts_touch before update on public.contacts for each row execute function public.touch_updated_at();
 
 create or replace function public.is_platform_admin()
@@ -119,32 +133,42 @@ alter table public.recognitions enable row level security;
 alter table public.projects enable row level security;
 alter table public.contacts enable row level security;
 
+drop policy if exists user_roles_read on public.user_roles;
 create policy user_roles_read on public.user_roles for select to authenticated
 using (user_id = (select auth.uid()) or public.is_platform_admin());
+drop policy if exists students_read on public.students;
 create policy students_read on public.students for select to authenticated
 using (user_id = (select auth.uid()) or public.is_platform_admin());
 
+drop policy if exists profiles_read on public.profiles;
 create policy profiles_read on public.profiles for select to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin());
+drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin())
 with check (public.owns_student(student_id) or public.is_platform_admin());
 
+drop policy if exists formations_owner_all on public.formations;
 create policy formations_owner_all on public.formations for all to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin())
 with check (public.owns_student(student_id) or public.is_platform_admin());
+drop policy if exists experiences_owner_all on public.experiences;
 create policy experiences_owner_all on public.experiences for all to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin())
 with check (public.owns_student(student_id) or public.is_platform_admin());
+drop policy if exists skills_owner_all on public.skills;
 create policy skills_owner_all on public.skills for all to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin())
 with check (public.owns_student(student_id) or public.is_platform_admin());
+drop policy if exists recognitions_owner_all on public.recognitions;
 create policy recognitions_owner_all on public.recognitions for all to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin())
 with check (public.owns_student(student_id) or public.is_platform_admin());
+drop policy if exists projects_owner_all on public.projects;
 create policy projects_owner_all on public.projects for all to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin())
 with check (public.owns_student(student_id) or public.is_platform_admin());
+drop policy if exists contacts_owner_all on public.contacts;
 create policy contacts_owner_all on public.contacts for all to authenticated
 using (public.owns_student(student_id) or public.is_platform_admin())
 with check (public.owns_student(student_id) or public.is_platform_admin());
@@ -161,6 +185,12 @@ begin
 end;
 $$;
 
+drop trigger if exists formations_draft on public.formations;
+drop trigger if exists experiences_draft on public.experiences;
+drop trigger if exists skills_draft on public.skills;
+drop trigger if exists recognitions_draft on public.recognitions;
+drop trigger if exists projects_draft on public.projects;
+drop trigger if exists contacts_draft on public.contacts;
 create trigger formations_draft after insert or update or delete on public.formations for each row execute function public.mark_profile_draft();
 create trigger experiences_draft after insert or update or delete on public.experiences for each row execute function public.mark_profile_draft();
 create trigger skills_draft after insert or update or delete on public.skills for each row execute function public.mark_profile_draft();
@@ -178,9 +208,11 @@ begin
   return new;
 end;
 $$;
+drop trigger if exists profile_content_draft on public.profiles;
 create trigger profile_content_draft before update on public.profiles for each row execute function public.profile_content_marks_draft();
 
-create or replace function public.publish_profile(target_student_id uuid)
+drop function if exists public.publish_profile(uuid);
+create function public.publish_profile(target_student_id uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare result jsonb; p public.profiles;
 begin
@@ -215,7 +247,8 @@ begin
 end;
 $$;
 
-create or replace function public.save_profile_bundle(target_student_id uuid, payload jsonb)
+drop function if exists public.save_profile_bundle(uuid, jsonb);
+create function public.save_profile_bundle(target_student_id uuid, payload jsonb)
 returns boolean language plpgsql security definer set search_path = '' as $$
 begin
   if not (public.owns_student(target_student_id) or public.is_platform_admin()) then
@@ -277,11 +310,14 @@ begin
 end;
 $$;
 
-create or replace function public.get_public_profile(requested_slug text)
+drop function if exists public.get_public_profile(text);
+create function public.get_public_profile(requested_slug text)
 returns jsonb language sql stable security definer set search_path = '' as $$
   select p.published_snapshot
   from public.students s join public.profiles p on p.student_id = s.id
-  where s.slug = requested_slug::citext and s.is_active and p.published_snapshot is not null;
+  where lower(s.slug::text) = lower(requested_slug)
+    and s.is_active
+    and p.published_snapshot is not null;
 $$;
 
 revoke all on function public.publish_profile(uuid) from public;
@@ -301,6 +337,10 @@ insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_typ
 values ('profile-photos', 'profile-photos', true, 5242880, array['image/jpeg', 'image/png', 'image/webp'])
 on conflict (id) do update set public = excluded.public, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
 
+drop policy if exists profile_photos_insert on storage.objects;
+drop policy if exists profile_photos_update on storage.objects;
+drop policy if exists profile_photos_delete on storage.objects;
+drop policy if exists profile_photos_public_read on storage.objects;
 create policy profile_photos_insert on storage.objects for insert to authenticated
 with check (bucket_id = 'profile-photos' and (storage.foldername(name))[1] = (select auth.uid())::text);
 create policy profile_photos_update on storage.objects for update to authenticated
@@ -313,3 +353,5 @@ using (bucket_id = 'profile-photos');
 
 -- Tras crear manualmente el primer usuario en Authentication, promuévalo una sola vez:
 -- insert into public.user_roles(user_id, role) values ('UUID_DEL_USUARIO', 'admin_plataforma');
+
+commit;

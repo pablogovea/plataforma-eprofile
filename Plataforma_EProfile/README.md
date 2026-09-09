@@ -12,7 +12,13 @@ Aplicación móvil primero para publicar tarjetas profesionales digitales por un
 ## Puesta en marcha
 
 1. Instala las dependencias con `npm install`.
-2. Conserva las variables de `.env` o copia `.env.example` y completa ambas variables.
+2. Crea el archivo `.env` desde la configuración incluida. En PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+   El nombre debe ser exactamente `.env`, no `.env.txt`. Si Vite ya estaba abierto, detenlo con `Ctrl+C` y vuelve a ejecutar `npm run dev` para que lea las variables.
 3. Abre el SQL Editor de Supabase y ejecuta `supabase/migrations/001_eprofile.sql` completo.
 4. Crea el primer usuario administrador desde Authentication > Users. Después, ejecuta en SQL Editor, reemplazando el correo por el de esa cuenta:
 
